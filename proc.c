@@ -118,6 +118,7 @@ found:
   p->ctime = ticks;
   p->etime = 0;
   p->rtime = 0;
+  p->priority = 60;
 
   return p;
 }
@@ -136,8 +137,8 @@ void userinit(void)
     panic("userinit: out of memory?");
   inituvm(p->pgdir, _binary_initcode_start, (int)_binary_initcode_size);
   p->sz = PGSIZE;
-  //p->ctime=ticks;
-  //p->priority=DEFAULT;
+  // p->ctime = ticks;
+  // p->priority = 60;
   memset(p->tf, 0, sizeof(*p->tf));
   p->tf->cs = (SEG_UCODE << 3) | DPL_USER;
   p->tf->ds = (SEG_UDATA << 3) | DPL_USER;
@@ -438,7 +439,10 @@ void scheduler(void)
 
         if (minP->state != RUNNABLE)
           continue;
+      }
 
+      if (minP != 0 && minP->state == RUNNABLE)
+      {
         cprintf("name=%s state=%d pid=%d ctime=%d ", minP->name, minP->state, minP->pid, minP->ctime);
         c->proc = minP;
         switchuvm(minP);
@@ -454,7 +458,36 @@ void scheduler(void)
 
     else if (SCHEDPOLICY[0] == 'P')
     {
-      //
+      acquire(&ptable.lock);
+      struct proc *highP = 0;
+      for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+      {
+        if (highP == 0)
+          highP = p;
+        else if ((p->state == RUNNABLE) && (highP->priority > p->priority))
+          highP = p;
+      }
+
+      for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+      {
+        if (p->state != RUNNABLE)
+          continue;
+
+        if (p->priority == highP->priority)
+        {
+          // cprintf("name=%s state=%d pid=%d ctime=%d ", highP->name, highP->state, highP->pid, highP->ctime);
+          c->proc = p;
+          switchuvm(p);
+          p->state = RUNNING;
+
+          swtch(&(c->scheduler), p->context);
+          switchkvm();
+          // cprintf("after=%d\n", highP->state);
+
+          c->proc = 0;
+        }
+      }
+      release(&ptable.lock);
     }
   }
 }
@@ -696,20 +729,21 @@ int cps()
   return 23;
 }
 
-// int chpr(int pid, int priority)
-// {
-//   struct proc *p;
+int setPriority(int pid, int priority)
+{
+  struct proc *p;
 
-//   acquire(&ptable.lock);
-//   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-//   {
-//     if (p->pid == pid)
-//     {
-//       p->priority = priority;
-//       break;
-//     }
-//   }
-//   release(&ptable.lock);
+  acquire(&ptable.lock);
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    if (p->pid == pid)
+    {
+      cprintf("pid=%d priority=%d newpri=%d\n", pid, p->priority, priority);
+      p->priority = priority;
+      break;
+    }
+  }
+  release(&ptable.lock);
 
-//   return pid;
-// }
+  return pid;
+}

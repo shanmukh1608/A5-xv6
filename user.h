@@ -25,7 +25,7 @@ int sleep(int);
 int uptime(void);
 int waitx(int *wtime, int *rtime);
 int cps(void);
-    
+int setPriority(int pid, int priority);
 // ulib.c
 int stat(const char *, struct stat *);
 char *strcpy(char *, const char *);

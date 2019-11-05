@@ -5,8 +5,8 @@
 int main(void)
 {
     // printf(1, "My first xv6 program\n");
-    for (int i = 0; i < 10; i++)
-    {
+    // for (int i = 0; i < 10; i++)
+    // {
         int id = fork();
         if (id < 0)
             printf(1, "Error forking\n");
@@ -19,10 +19,10 @@ int main(void)
         }
         else
         {
-            for (volatile int k = 0; k < 10000000; k++)
+            for (volatile int k = 0; k < 10000000000; k++)
                 k = k + 1 - 2 + 2;
             exit();
         }
-    }
-    exit();
+    // }
+    // exit();
 }
