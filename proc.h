@@ -63,6 +63,8 @@ struct proc
 
   //new fields for waitx
   int ctime, etime, rtime;
+
+  int priority;
 };
 
 // Process memory is laid out contiguously, low addresses first:
