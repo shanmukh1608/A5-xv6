@@ -12,15 +12,16 @@ int main(void)
             printf(1, "Error forking\n");
         else if (id > 0)
         {
-            int a, b;
-            waitx(&a, &b);
-            printf(1, "The process waited for %d and ran for %d\n", a, b);
+            // int a, b;
+            // waitx(&a, &b);
+            // printf(1, "The process waited for %d and ran for %d\n", a, b);
+            wait();
         }
         else
         {
             for (volatile int k = 0; k < 10000000; k++)
                 k = k + 1 - 2 + 2;
-            break;
+            exit();
         }
     }
     exit();

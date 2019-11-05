@@ -423,36 +423,30 @@ void scheduler(void)
     else if (SCHEDPOLICY[0] == 'F')
     {
       acquire(&ptable.lock);
+      struct proc *minP = 0;
       for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
       {
-        struct proc *minP = 0;
-        struct proc *p1 = 0;
-
         if (p->state != RUNNABLE)
           continue;
+        if (minP != 0)
+        {
+          if (p->ctime < minP->ctime)
+            minP = p;
+        }
+        else
+          minP = p;
 
-        for (p1 = ptable.proc; p1 < &ptable.proc[NPROC]; p1++)
-          if (p1->pid > 1)
-          {
-            if (minP != 0)
-            {
-              if (p->ctime < minP->ctime)
-                minP = p1;
-            }
-            else
-              minP = p1;
-          }
+        if (minP->state != RUNNABLE)
+          continue;
 
-        if (minP != 0 && minP->state == RUNNABLE)
-          p = minP;
+        cprintf("name=%s state=%d pid=%d ctime=%d ", minP->name, minP->state, minP->pid, minP->ctime);
+        c->proc = minP;
+        switchuvm(minP);
+        minP->state = RUNNING;
 
-        c->proc = p;
-        switchuvm(p);
-        p->state = RUNNING;
-
-        swtch(&(c->scheduler), p->context);
+        swtch(&(c->scheduler), minP->context);
         switchkvm();
-
+        cprintf("after=%d\n", minP->state);
         c->proc = 0;
       }
       release(&ptable.lock);
@@ -701,3 +695,21 @@ int cps()
 
   return 23;
 }
+
+// int chpr(int pid, int priority)
+// {
+//   struct proc *p;
+
+//   acquire(&ptable.lock);
+//   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+//   {
+//     if (p->pid == pid)
+//     {
+//       p->priority = priority;
+//       break;
+//     }
+//   }
+//   release(&ptable.lock);
+
+//   return pid;
+// }
