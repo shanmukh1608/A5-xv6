@@ -33,7 +33,7 @@ void idtinit(void)
 //PAGEBREAK: 41
 void trap(struct trapframe *tf)
 {
-	struct proc *proc =myproc();
+	struct proc *proc = myproc();
 	if (tf->trapno == T_SYSCALL)
 	{
 		if (myproc()->killed)
