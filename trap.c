@@ -14,6 +14,10 @@ extern uint vectors[]; // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
+int maxTicks[5] = {1, 2, 4, 8, 16};
+// int maxTicks[5] = {100, 200, 300, 400, 500};
+
+
 void tvinit(void)
 {
 	int i;
@@ -28,6 +32,23 @@ void tvinit(void)
 void idtinit(void)
 {
 	lidt(idt, sizeof(idt));
+}
+
+void updateTicks(void)
+{
+	struct proc *curproc = myproc();
+	curproc->ticksCurrentQueue++;
+	curproc->ticksEachQueue[curproc->currentQueue]++;
+	curproc->lastScheduledTime = ticks;
+
+	if (curproc->ticksCurrentQueue >= maxTicks[curproc->currentQueue])
+	{
+		if (curproc->currentQueue < NPRIOR - 1)
+			curproc->currentQueue++;
+
+			// if (curproc->pid > 2) //to prevent demotion of init and sh
+		yield();
+	}
 }
 
 //PAGEBREAK: 41
@@ -107,9 +128,13 @@ void trap(struct trapframe *tf)
 
 	// Force process to give up CPU on clock tick.
 	// If interrupts were on while locks held, would need to check nlock.
-	if (myproc() && myproc()->state == RUNNING &&
-		tf->trapno == T_IRQ0 + IRQ_TIMER && SCHEDPOLICY[0] != 'F')
-		yield();
+	if (myproc() && myproc()->state == RUNNING && tf->trapno == T_IRQ0 + IRQ_TIMER)
+	{
+		if (SCHEDPOLICY[0] == 'D' || SCHEDPOLICY[0] == 'P')
+			yield();
+		else if (SCHEDPOLICY[0] == 'M')
+			updateTicks();
+	}
 
 	// Check if the process has been killed since we yielded
 	if (myproc() && myproc()->killed && (tf->cs & 3) == DPL_USER)

@@ -4,6 +4,7 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "x86.h"
+#include "mlfq.h"
 #include "proc.h"
 #include "spinlock.h"
 
@@ -25,6 +26,8 @@ void pinit(void)
 {
   initlock(&ptable.lock, "ptable");
 }
+
+int maxTicks[5];
 
 // Must be called with interrupts disabled
 int cpuid()
@@ -119,6 +122,10 @@ found:
   p->etime = 0;
   p->rtime = 0;
   p->priority = 60;
+  p->currentQueue = 0;
+  p->ticksCurrentQueue = 0;
+  for (int priority = 0; priority < NPRIOR; priority++)
+    p->ticksEachQueue[priority] = 0;
 
   return p;
 }
@@ -158,6 +165,8 @@ void userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  if (SCHEDPOLICY[0] == 'M')
+    addToQueue(p);
 
   release(&ptable.lock);
 }
@@ -227,6 +236,8 @@ int fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  if (SCHEDPOLICY[0] == 'M')
+    addToQueue(np);
 
   release(&ptable.lock);
 
@@ -443,14 +454,14 @@ void scheduler(void)
 
       if (minP != 0 && minP->state == RUNNABLE)
       {
-        cprintf("name=%s state=%d pid=%d ctime=%d ", minP->name, minP->state, minP->pid, minP->ctime);
+        // cprintf("name=%s state=%d pid=%d ctime=%d ", minP->name, minP->state, minP->pid, minP->ctime);
         c->proc = minP;
         switchuvm(minP);
         minP->state = RUNNING;
 
         swtch(&(c->scheduler), minP->context);
         switchkvm();
-        cprintf("after=%d\n", minP->state);
+        // cprintf("after=%d\n", minP->state);
         c->proc = 0;
       }
       release(&ptable.lock);
@@ -470,6 +481,15 @@ void scheduler(void)
 
       for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
       {
+        int flag = 0;
+
+        for (struct proc *p1 = ptable.proc; p1 < &ptable.proc[NPROC]; p1++)
+          if (p1->priority < highP->priority)
+            flag = 1;
+
+        if (flag == 0)
+          break;
+
         if (p->state != RUNNABLE)
           continue;
 
@@ -483,49 +503,41 @@ void scheduler(void)
           swtch(&(c->scheduler), p->context);
           switchkvm();
           // cprintf("after=%d\n", highP->state);
-
+          if (p->state == RUNNABLE)
+            break;
           c->proc = 0;
         }
       }
       release(&ptable.lock);
     }
+
+    else if (SCHEDPOLICY[0] == 'M')
+    {
+      //aging
+      aging();
+
+      //mlfq
+      acquire(&ptable.lock);
+      p = nextProcessToRun();
+      // cprintf("LALALA\n");
+      if (p != 0 && p->state == RUNNABLE)
+      {
+        // displayAll();
+        // cprintf("Process %d has been chosen from %d at %d\n", p->pid, p->currentQueue, ticks);
+        p->ticksCurrentQueue = 0;
+        c->proc = p;
+        switchuvm(p);
+        p->state = RUNNING;
+        p->lastScheduledTime = ticks;
+        swtch(&(c->scheduler), p->context);
+        switchkvm();
+
+        c->proc = 0;
+      }
+      release(&ptable.lock);
+    }
   }
 }
-// void scheduler(void)
-// {
-//   struct proc *p;
-//   struct cpu *c = mycpu();
-//   c->proc = 0;
-
-//   for (;;)
-//   {
-//     // Enable interrupts on this processor.
-//     sti();
-
-//     // Loop over process table looking for process to run.
-//     acquire(&ptable.lock);
-//     for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-//     {
-//       if (p->state != RUNNABLE)
-//         continue;
-
-//       // Switch to chosen process.  It is the process's job
-//       // to release ptable.lock and then reacquire it
-//       // before jumping back to us.
-//       c->proc = p;
-//       switchuvm(p);
-//       p->state = RUNNING;
-
-//       swtch(&(c->scheduler), p->context);
-//       switchkvm();
-
-//       // Process is done running for now.
-//       // It should have changed its p->state before coming back.
-//       c->proc = 0;
-//     }
-//     release(&ptable.lock);
-//   }
-// }
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
@@ -556,7 +568,11 @@ void sched(void)
 void yield(void)
 {
   acquire(&ptable.lock); //DOC: yieldlock
-  myproc()->state = RUNNABLE;
+  struct proc *p = myproc();
+  p->state = RUNNABLE;
+  // updateTicks();
+  if (SCHEDPOLICY[0] == 'M')
+    addToQueue(p);
   sched();
   release(&ptable.lock);
 }
@@ -632,7 +648,11 @@ wakeup1(void *chan)
 
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if (p->state == SLEEPING && p->chan == chan)
+    {
       p->state = RUNNABLE;
+      if (SCHEDPOLICY[0] == 'M')
+        addToQueue(p);
+    }
 }
 
 // Wake up all processes sleeping on chan.
@@ -658,7 +678,11 @@ int kill(int pid)
       p->killed = 1;
       // Wake process from sleep if necessary.
       if (p->state == SLEEPING)
+      {
         p->state = RUNNABLE;
+        if (SCHEDPOLICY[0] == 'M')
+          addToQueue(p);
+      }
       release(&ptable.lock);
       return 0;
     }
@@ -713,15 +737,15 @@ int cps()
 
   // Loop over process table looking for process with pid.
   acquire(&ptable.lock);
-  cprintf("name \t pid \t state \t \t priority \n");
+  cprintf("name \t pid \t state \t \t priority \t currentQueue \t ticks \n");
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
   {
     if (p->state == SLEEPING)
-      cprintf("%s \t %d \t SLEEPING \t %d\n", p->name, p->pid, p->priority);
+      cprintf("%s \t %d \t SLEEPING \t %d \t\t %d \t\t %d\n", p->name, p->pid, p->priority, p->currentQueue, p->ticksCurrentQueue);
     else if (p->state == RUNNING)
-      cprintf("%s \t %d \t RUNNING \t %d\n", p->name, p->pid, p->priority);
+      cprintf("%s \t %d \t RUNNING \t %d \t\t %d \t\t %d\n", p->name, p->pid, p->priority, p->currentQueue, p->ticksCurrentQueue);
     else if (p->state == RUNNABLE)
-      cprintf("%s \t %d \t RUNNABLE \t %d\n", p->name, p->pid, p->priority);
+      cprintf("%s \t %d \t RUNNABLE \t %d \t\t %d \t\t %d\n", p->name, p->pid, p->priority, p->currentQueue, p->ticksCurrentQueue);
   }
 
   release(&ptable.lock);
@@ -738,7 +762,7 @@ int setPriority(int pid, int priority)
   {
     if (p->pid == pid)
     {
-      cprintf("pid=%d priority=%d newpri=%d\n", pid, p->priority, priority);
+      // cprintf("pid=%d priority=%d newpri=%d\n", pid, p->priority, priority);
       p->priority = priority;
       break;
     }
